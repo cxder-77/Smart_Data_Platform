@@ -1,0 +1,13 @@
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.9.2
+seaborn==0.13.2
+scikit-learn==1.5.2
+streamlit==1.36.0
+plotly==5.24.1
+tensorflow==2.19.0
+jax==0.6.2
+jaxlib==0.6.2
+fastapi==0.115.5
+uvicorn==0.30.6
+mediapipe==0.10.21

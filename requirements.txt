@@ -11,4 +11,5 @@ jaxlib==0.6.2
 fastapi==0.115.5
 uvicorn==0.30.6
 mediapipe==0.10.21
-openpyxl==3.10.10
+openpyxl==3.1.5
+rich==13.9.4

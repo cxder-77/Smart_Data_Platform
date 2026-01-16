@@ -71,16 +71,29 @@ def get_theme_css():
     return f"""
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root {{
-            --bg-primary: {colors['bg_primary']};
-            --bg-secondary: {colors['bg_secondary']};
-            --text-primary: {colors['text_primary']};
-            --text-secondary: {colors['text_secondary']};
-            --border: {colors['border']};
-            --card-bg: {colors['card_bg']};
-            --accent1: {colors['accent1']};
-            --accent2: {colors['accent2']};
-            --shadow: {colors['shadow']};
+        * {{
+            --bg-primary: {colors['bg_primary']} !important;
+            --bg-secondary: {colors['bg_secondary']} !important;
+            --text-primary: {colors['text_primary']} !important;
+            --text-secondary: {colors['text_secondary']} !important;
+            --border: {colors['border']} !important;
+            --card-bg: {colors['card_bg']} !important;
+            --accent1: {colors['accent1']} !important;
+            --accent2: {colors['accent2']} !important;
+            --shadow: {colors['shadow']} !important;
+        }}
+        
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"] {{
+            background-color: {colors['bg_primary']} !important;
+            color: {colors['text_primary']} !important;
+        }}
+        
+        [data-testid="stSidebar"] {{
+            background-color: {colors['bg_secondary']} !important;
+        }}
+        
+        [data-testid="stMarkdownContainer"] {{
+            color: {colors['text_primary']} !important;
         }}
         
         .main-header {{
@@ -101,25 +114,25 @@ def get_theme_css():
             box-shadow: 0 4px 6px {colors['shadow']};
         }}
         .insight-card {{
-            background: {colors['card_bg']};
+            background: {colors['card_bg']} !important;
             padding: 15px;
             border-radius: 8px;
             border-left: 4px solid {colors['accent1']};
             margin: 10px 0;
-            color: {colors['text_primary']};
+            color: {colors['text_primary']} !important;
             box-shadow: 0 2px 4px {colors['shadow']};
         }}
         .stButton>button {{
             width: 100%;
-            background: linear-gradient(90deg, {colors['accent1']} 0%, {colors['accent2']} 100%);
-            color: white;
+            background: linear-gradient(90deg, {colors['accent1']} 0%, {colors['accent2']} 100%) !important;
+            color: white !important;
             border: none;
             padding: 10px;
             border-radius: 5px;
             font-weight: bold;
         }}
         [data-testid="stMarkdownContainer"] p {{
-            color: {colors['text_primary']};
+            color: {colors['text_primary']} !important;
         }}
         .icon-text {{
             display: flex;
@@ -129,8 +142,8 @@ def get_theme_css():
         .icon-text i {{
             font-size: 1.2em;
         }}
-        [data-testid="stSidebar"] {{
-            background-color: {colors['bg_secondary']};
+        h1, h2, h3, h4, h5, h6, p, span, div {{
+            color: {colors['text_primary']} !important;
         }}
     </style>
     """
@@ -432,9 +445,11 @@ def main():
         st.markdown("---")
         
         # Theme toggle
-        theme = st.selectbox("Theme", ["Light", "Dark"], format_func=lambda x: f"🎨 {x}", key="theme_select")
-        if theme.lower() != st.session_state.theme:
-            st.session_state.theme = theme.lower()
+        current_theme_index = 0 if st.session_state.theme == 'light' else 1
+        theme = st.selectbox("Theme", ["Light", "Dark"], index=current_theme_index, format_func=lambda x: f"🎨 {x}", key="theme_select")
+        new_theme = theme.lower()
+        if new_theme != st.session_state.theme:
+            st.session_state.theme = new_theme
             st.rerun()
         
         st.markdown("---")

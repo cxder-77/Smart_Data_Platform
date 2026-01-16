@@ -27,60 +27,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS with Font Awesome icons
-st.markdown("""
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding: 20px;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .insight-card {
-        background: #ffffff;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 4px solid #667eea;
-        margin: 10px 0;
-        color: #000000;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .stButton>button {
-        width: 100%;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 10px;
-        border-radius: 5px;
-        font-weight: bold;
-    }
-    [data-testid="stMarkdownContainer"] p {
-        color: inherit;
-    }
-    .icon-text {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .icon-text i {
-        font-size: 1.2em;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
+# Initialize session state first
 if 'df' not in st.session_state:
     st.session_state.df = None
 if 'original_df' not in st.session_state:
@@ -89,6 +36,107 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 if 'theme' not in st.session_state:
     st.session_state.theme = 'light'
+
+# Theme configuration
+THEMES = {
+    'light': {
+        'bg_primary': '#ffffff',
+        'bg_secondary': '#f5f5f5',
+        'text_primary': '#000000',
+        'text_secondary': '#666666',
+        'border': '#e0e0e0',
+        'card_bg': '#ffffff',
+        'accent1': '#667eea',
+        'accent2': '#764ba2',
+        'shadow': 'rgba(0,0,0,0.1)'
+    },
+    'dark': {
+        'bg_primary': '#1a1a1a',
+        'bg_secondary': '#2d2d2d',
+        'text_primary': '#ffffff',
+        'text_secondary': '#b0b0b0',
+        'border': '#404040',
+        'card_bg': '#2d2d2d',
+        'accent1': '#667eea',
+        'accent2': '#764ba2',
+        'shadow': 'rgba(0,0,0,0.5)'
+    }
+}
+
+def get_theme_css():
+    """Generate CSS based on current theme"""
+    theme = st.session_state.theme
+    colors = THEMES[theme]
+    
+    return f"""
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {{
+            --bg-primary: {colors['bg_primary']};
+            --bg-secondary: {colors['bg_secondary']};
+            --text-primary: {colors['text_primary']};
+            --text-secondary: {colors['text_secondary']};
+            --border: {colors['border']};
+            --card-bg: {colors['card_bg']};
+            --accent1: {colors['accent1']};
+            --accent2: {colors['accent2']};
+            --shadow: {colors['shadow']};
+        }}
+        
+        .main-header {{
+            font-size: 3rem;
+            font-weight: bold;
+            background: linear-gradient(90deg, {colors['accent1']} 0%, {colors['accent2']} 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            padding: 20px;
+        }}
+        .metric-card {{
+            background: linear-gradient(135deg, {colors['accent1']} 0%, {colors['accent2']} 100%);
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 4px 6px {colors['shadow']};
+        }}
+        .insight-card {{
+            background: {colors['card_bg']};
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid {colors['accent1']};
+            margin: 10px 0;
+            color: {colors['text_primary']};
+            box-shadow: 0 2px 4px {colors['shadow']};
+        }}
+        .stButton>button {{
+            width: 100%;
+            background: linear-gradient(90deg, {colors['accent1']} 0%, {colors['accent2']} 100%);
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }}
+        [data-testid="stMarkdownContainer"] p {{
+            color: {colors['text_primary']};
+        }}
+        .icon-text {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .icon-text i {{
+            font-size: 1.2em;
+        }}
+        [data-testid="stSidebar"] {{
+            background-color: {colors['bg_secondary']};
+        }}
+    </style>
+    """
+
+# Custom CSS with Font Awesome icons
+st.markdown(get_theme_css(), unsafe_allow_html=True)
 if 'ml_model' not in st.session_state:
     st.session_state.ml_model = None
 if 'ml_results' not in st.session_state:
@@ -384,8 +432,10 @@ def main():
         st.markdown("---")
         
         # Theme toggle
-        theme = st.selectbox("Theme", ["Light", "Dark"], format_func=lambda x: f"🎨 {x}")
-        st.session_state.theme = theme.lower()
+        theme = st.selectbox("Theme", ["Light", "Dark"], format_func=lambda x: f"🎨 {x}", key="theme_select")
+        if theme.lower() != st.session_state.theme:
+            st.session_state.theme = theme.lower()
+            st.rerun()
         
         st.markdown("---")
         st.markdown("### Dataset Info")

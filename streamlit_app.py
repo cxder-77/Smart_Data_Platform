@@ -445,7 +445,7 @@ def main():
         st.markdown("---")
         
         # Theme toggle
-        current_theme_index = 0 if st.session_state.theme == 'light' else 1
+        current_theme_index = 0 if st.session_state.theme == 'dark' else 1
         theme = st.selectbox("Theme", ["Light", "Dark"], index=current_theme_index, format_func=lambda x: f"🎨 {x}", key="theme_select")
         new_theme = theme.lower()
         if new_theme != st.session_state.theme:
@@ -468,6 +468,10 @@ def main():
     if menu == "Home":
         st.markdown('<h1 class="main-header"><i class="fas fa-chart-line"></i> AI Data Analysis Studio</h1>', unsafe_allow_html=True)
         st.markdown("### Transform Your Data into Insights — No Coding Required!")
+        
+        # Light theme caution
+        if st.session_state.theme == 'light':
+            st.warning("⚠️ **Under Beta** - Light theme may have display issues with some text and tables. For the best experience, please switch to Dark theme in the sidebar.")
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:

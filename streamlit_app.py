@@ -445,7 +445,7 @@ def main():
         st.markdown("---")
         
         # Theme toggle
-        current_theme_index = 0 if st.session_state.theme == 'dark' else 1
+        current_theme_index = 0 if st.session_state.theme == 'Dark' else 1
         theme = st.selectbox("Theme", ["Light", "Dark"], index=current_theme_index, format_func=lambda x: f"🎨 {x}", key="theme_select")
         new_theme = theme.lower()
         if new_theme != st.session_state.theme:

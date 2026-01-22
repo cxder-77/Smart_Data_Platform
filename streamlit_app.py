@@ -36,6 +36,14 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 if 'theme' not in st.session_state:
     st.session_state.theme = 'light'
+if 'ml_model' not in st.session_state:
+    st.session_state.ml_model = None
+if 'ml_results' not in st.session_state:
+    st.session_state.ml_results = None
+if 'selected_column_dist' not in st.session_state:
+    st.session_state.selected_column_dist = None
+if 'chart_data' not in st.session_state:
+    st.session_state.chart_data = {}
 
 # Theme configuration
 THEMES = {
@@ -149,13 +157,7 @@ def get_theme_css():
     """
 
 # Custom CSS with Font Awesome icons
-st.markdown(get_theme_css(), unsafe_allow_html=True)
-if 'ml_model' not in st.session_state:
-    st.session_state.ml_model = None
-if 'ml_results' not in st.session_state:
-    st.session_state.ml_results = None
-
-# Helper Functions
+st.markdown(get_theme_css(), unsafe_allow_html=True)# Helper Functions
 def load_data(file, file_type):
     """Load data from various file formats"""
     try:
@@ -345,7 +347,7 @@ def export_to_pdf_html(df, insights, charts):
     return html_content
 
 def suggest_visualizations(df):
-    """Return a list of suggested visualizations based on df structure."""
+    """Return intelligent, validated visualization suggestions based on data characteristics."""
     suggestions = []
     if df is None or df.empty:
         return suggestions
@@ -354,69 +356,65 @@ def suggest_visualizations(df):
     categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
     datetime_cols = df.select_dtypes(include=['datetime', 'datetime64[ns]']).columns.tolist()
 
-    # Cardinality helpers
-    low_card_cats = [c for c in categorical_cols if df[c].nunique() <= 10]
-    high_card_cats = [c for c in categorical_cols if df[c].nunique() > 10]
-
-    # 1. Time series / Line Chart if a datetime and at least one numeric
-    if datetime_cols and numeric_cols:
+    # Filter out ID, index, and count columns
+    def is_meaningful_col(col_name):
+        col_lower = col_name.lower()
+        skip_words = ['id', 'index', 'idx', 'count', 'pk', 'rowid', 'serial', 'sequence', 'no.', 'num']
+        return not any(word in col_lower for word in skip_words)
+    
+    meaningful_numeric = [c for c in numeric_cols if is_meaningful_col(c)]
+    meaningful_categorical = [c for c in categorical_cols if is_meaningful_col(c)]
+    meaningful_low_card_cats = [c for c in meaningful_categorical if 2 <= df[c].nunique() <= 10]
+    meaningful_very_low_card_cats = [c for c in meaningful_categorical if df[c].nunique() == 2]
+    
+    # 1. TIME SERIES - Priority for datetime + numeric
+    if datetime_cols and meaningful_numeric:
         suggestions.append({
-            "name": "Line Chart (time series)",
-            "reason": f"Found datetime column ({', '.join(datetime_cols[:2])}) and numeric data",
-            "config": {"type": "Line Chart", "x": datetime_cols[0], "y": numeric_cols[0], "color": None}
+            "name": "📈 Line Chart (Trend Over Time)",
+            "reason": f"Visualize {meaningful_numeric[0]} trends over {datetime_cols[0]}",
         })
 
-    # 2. Scatter plot if at least 2 numeric columns
-    if len(numeric_cols) >= 2:
+    # 2. CATEGORY DISTRIBUTION - Bar chart for meaningful categories
+    if meaningful_low_card_cats:
+        best_cat = meaningful_low_card_cats[0]
         suggestions.append({
-            "name": "Scatter Plot",
-            "reason": f"{len(numeric_cols)} numeric columns available",
-            "config": {"type": "Scatter Plot", "x": numeric_cols[0], "y": numeric_cols[1], "color": None, "size": None}
+            "name": "📊 Bar Chart (Category Comparison)",
+            "reason": f"Compare counts/totals across {best_cat}",
         })
 
-    # 3. Histogram (distribution) for numeric columns
-    if numeric_cols:
+    # 3. NUMERIC DISTRIBUTION - Histogram for continuous data
+    if meaningful_numeric:
         suggestions.append({
-            "name": "Histogram",
-            "reason": f"Good for distribution of {numeric_cols[0]}",
-            "config": {"type": "Histogram", "x": numeric_cols[0], "bins": 30}
+            "name": "📉 Histogram (Distribution)",
+            "reason": f"See the distribution pattern of {meaningful_numeric[0]}",
         })
 
-    # 4. Box plot for numeric columns to show outliers
-    if numeric_cols:
+    # 4. CORRELATION ANALYSIS - Heatmap for numeric relationships
+    if len(meaningful_numeric) >= 3:
         suggestions.append({
-            "name": "Box Plot",
-            "reason": f"Use to check distribution and outliers for {numeric_cols[0]}",
-            "config": {"type": "Box Plot", "x": None, "y": numeric_cols[0]}
+            "name": "🔥 Heatmap (Correlations)",
+            "reason": f"Find relationships between {len(meaningful_numeric[:8])} numeric features",
         })
 
-    # 5. Bar / Pie for low-cardinality categorical columns
-    if low_card_cats:
+    # 5. NUMERIC RELATIONSHIP - Scatter for 2+ numeric columns
+    if len(meaningful_numeric) >= 2:
         suggestions.append({
-            "name": "Bar Chart",
-            "reason": f"Categorical column(s) with low cardinality: {', '.join(low_card_cats[:2])}",
-            "config": {"type": "Bar Chart", "x": low_card_cats[0], "y": None, "color": None}
-        })
-        suggestions.append({
-            "name": "Pie Chart",
-            "reason": f"Show proportion for {low_card_cats[0]}",
-            "config": {"type": "Pie Chart", "x": low_card_cats[0], "y": None}
+            "name": "⚪ Scatter Plot (Relationship)",
+            "reason": f"Find patterns between {meaningful_numeric[0]} and {meaningful_numeric[1]}",
         })
 
-    # 6. Heatmap for numeric correlation
-    if len(numeric_cols) >= 2:
+    # 6. BINARY CATEGORIES - Pie chart for yes/no or 2-category data
+    if meaningful_very_low_card_cats:
         suggestions.append({
-            "name": "Heatmap (correlation)",
-            "reason": "Shows correlation among numeric features",
-            "config": {"type": "Heatmap", "cols": numeric_cols[:6]}
+            "name": "🥧 Pie Chart (Proportions)",
+            "reason": f"Show proportions for {meaningful_very_low_card_cats[0]}",
         })
 
-    # 7. Pair Plot for quick multivariate view
-    if len(numeric_cols) >= 3:
+    # 7. OUTLIER DETECTION - Box plot
+    if meaningful_numeric:
         suggestions.append({
-            "name": "Pair Plot",
-            "reason": f"Quick pairwise view for {len(numeric_cols[:5])} numeric columns",
-            "config": {"type": "Pair Plot", "cols": numeric_cols[:5]}
+            "name": "📦 Box Plot (Outliers & Distribution)",
+            "reason": f"Identify outliers and spread in {meaningful_numeric[0]}",
         })
 
     return suggestions
@@ -685,26 +683,28 @@ def main():
         st.markdown('<h2><i class="fas fa-chart-pie"></i> Interactive Visualizations</h2>', unsafe_allow_html=True)
         df = st.session_state.df
 
+        # Smart suggestion system for first-time users
+        st.info("💡 **Pro Tip**: Below are AI-recommended visualizations based on your data. Click 'Use This' to add them!")
+        
+        suggestions = suggest_visualizations(df)
+        
+        if suggestions:
+            st.subheader("📋 Recommended Visualizations (Choose Below)")
+            st.info("Based on your data analysis, here are the best charts for different insights:")
+            
+            for i, suggestion in enumerate(suggestions, 1):
+                st.write(f"**{i}. {suggestion['name']}** — {suggestion['reason']}")
+        
+        st.markdown("---")
+        st.subheader("🎨 Create Your Visualization")
+        st.info("Select the chart type and columns below to create a custom visualization")
+        
         # Initialize visualization configurations list in session
         if "viz_configs" not in st.session_state:
             st.session_state.viz_configs = []
 
         # Button to add a new visualization block
         if st.button("➕ Add Visualization"):
-            st.session_state.viz_configs.append(
-                {
-                    "type": "Bar Chart",
-                    "x": None,
-                    "y": None,
-                    "color": None,
-                    "size": None,
-                    "bins": 30,
-                    "cols": [],
-                }
-            )
-
-        # Ensure at least one visualization exists
-        if len(st.session_state.viz_configs) == 0:
             st.session_state.viz_configs.append(
                 {
                     "type": "Bar Chart",
@@ -726,7 +726,13 @@ def main():
 
         for idx, cfg in enumerate(st.session_state.viz_configs):
             st.markdown("---")
-            st.markdown(f"#### Visualization {idx + 1}")
+            col_title, col_remove = st.columns([5, 1])
+            with col_title:
+                st.markdown(f"#### Visualization {idx + 1}")
+            with col_remove:
+                if st.button("🗑️ Remove", key=f"remove_{idx}"):
+                    remove_indices.append(idx)
+                    st.rerun()
 
             header_cols = st.columns([3, 1])
             with header_cols[0]:

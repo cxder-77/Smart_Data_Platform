@@ -47,10 +47,6 @@ if 'selected_column_dist' not in st.session_state:
     st.session_state.selected_column_dist = None
 if 'chart_data' not in st.session_state:
     st.session_state.chart_data = {}
-if 'dataset_manager' not in st.session_state:
-    st.session_state.dataset_manager = DatasetManager()
-if 'current_dataset_id' not in st.session_state:
-    st.session_state.current_dataset_id = None
 
 # Theme configuration
 THEMES = {
@@ -527,139 +523,7 @@ def suggest_visualizations(df):
 
     return suggestions
 
-# Dataset Management Functions
-def show_dataset_management():
-    """Display dataset management interface"""
-    st.markdown("## 📁 Dataset Management")
-    
-    tabs = st.tabs(["Recent Datasets", "Liked Datasets", "Search", "Workspace Stats"])
-    
-    dm = st.session_state.dataset_manager
-    
-    # Tab 1: Recent Datasets
-    with tabs[0]:
-        st.subheader("Recent Datasets")
-        recent = dm.get_recent_datasets(limit=10)
-        
-        if recent:
-            for dataset in recent:
-                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                
-                with col1:
-                    st.write(f"📊 **{dataset['filename']}**")
-                    st.caption(f"Created: {dataset['created'][:10]} | Size: {dataset['size_mb']} MB | {dataset['rows']} rows × {dataset['cols']} cols")
-                    if dataset['description']:
-                        st.caption(f"📝 {dataset['description']}")
-                    if dataset['tags']:
-                        st.caption(f"Tags: {', '.join(dataset['tags'])}")
-                
-                with col2:
-                    like_btn = st.button(
-                        "❤️" if dataset['liked'] else "🤍",
-                        key=f"like_{dataset['id']}",
-                        help="Like/Unlike"
-                    )
-                    if like_btn:
-                        dm.toggle_like(dataset['id'])
-                        st.rerun()
-                
-                with col3:
-                    if st.button("📝", key=f"rename_{dataset['id']}", help="Rename"):
-                        st.session_state[f"rename_mode_{dataset['id']}"] = True
-                
-                with col4:
-                    if st.button("🗑️", key=f"delete_{dataset['id']}", help="Delete"):
-                        dm.delete_dataset(dataset['id'])
-                        st.success("Dataset deleted!")
-                        st.rerun()
-                
-                # Rename modal
-                if st.session_state.get(f"rename_mode_{dataset['id']}", False):
-                    new_name = st.text_input("New name:", value=dataset['filename'], key=f"new_name_{dataset['id']}")
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        if st.button("Save", key=f"save_rename_{dataset['id']}"):
-                            dm.rename_dataset(dataset['id'], new_name)
-                            st.success("Dataset renamed!")
-                            st.session_state[f"rename_mode_{dataset['id']}"] = False
-                            st.rerun()
-                    with col_b:
-                        if st.button("Cancel", key=f"cancel_rename_{dataset['id']}"):
-                            st.session_state[f"rename_mode_{dataset['id']}"] = False
-                            st.rerun()
-                
-                st.divider()
-        else:
-            st.info("No datasets in history yet. Upload a dataset to get started!")
-    
-    # Tab 2: Liked Datasets
-    with tabs[1]:
-        st.subheader("❤️ Liked Datasets")
-        liked = dm.get_liked_datasets()
-        
-        if liked:
-            for dataset in liked:
-                st.write(f"📊 **{dataset['filename']}** ❤️")
-                st.caption(f"Size: {dataset['size_mb']} MB | {dataset['rows']} rows × {dataset['cols']} cols")
-                st.divider()
-        else:
-            st.info("No liked datasets yet!")
-    
-    # Tab 3: Search
-    with tabs[2]:
-        st.subheader("🔍 Search Datasets")
-        search_query = st.text_input("Search by name or tags:")
-        
-        if search_query:
-            results = dm.search_datasets(search_query)
-            if results:
-                st.success(f"Found {len(results)} dataset(s)")
-                for dataset in results:
-                    st.write(f"📊 {dataset['filename']}")
-                    st.caption(f"Size: {dataset['size_mb']} MB | {dataset['rows']} rows")
-            else:
-                st.warning("No datasets found matching your search")
-    
-    # Tab 4: Workspace Statistics
-    with tabs[3]:
-        st.subheader("📊 Workspace Statistics")
-        stats = dm.get_statistics()
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Datasets", stats['total_datasets'])
-        with col2:
-            st.metric("Total Size (MB)", stats['total_size_mb'])
-        with col3:
-            st.metric("Average Size (MB)", stats['average_size_mb'])
-        
-        st.divider()
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Rows", stats['total_rows'])
-        with col2:
-            st.metric("Liked Datasets", stats['liked_count'])
-        with col3:
-            st.metric("Versions Available", stats['total_datasets'])
 
-
-def add_current_dataset_to_history(filename: str, filepath: str, df: pd.DataFrame):
-    """Add current dataset to history"""
-    file_size = os.path.getsize(filepath) / (1024 * 1024) if os.path.exists(filepath) else 0
-    
-    dm = st.session_state.dataset_manager
-    dataset = dm.add_dataset(
-        filename=filename,
-        filepath=filepath,
-        rows=len(df),
-        cols=len(df.columns),
-        file_size=file_size,
-        description="Uploaded dataset"
-    )
-    
-    st.session_state.current_dataset_id = dataset['id']
-    return dataset
 
 # Main App
 def main():
@@ -671,7 +535,6 @@ def main():
         menu_items = {
             "Home": "fa-home",
             "Upload Data": "fa-cloud-upload-alt",
-            "Dataset Management": "fa-folder-open",
             "Data Profiling": "fa-search",
             "Visualizations": "fa-chart-pie",
             "Data Cleaning": "fa-broom",
@@ -785,12 +648,6 @@ def main():
                     st.session_state.original_df = df.copy()
                     st.success(f"✓ Successfully loaded {len(df)} rows and {len(df.columns)} columns!")
                     
-                    # Add to dataset history
-                    temp_path = f"temp_{uploaded_file.name}"
-                    with open(temp_path, 'wb') as f:
-                        f.write(uploaded_file.getbuffer())
-                    add_current_dataset_to_history(uploaded_file.name, temp_path, df)
-                    
                     st.subheader("Data Preview")
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Rows", len(df))
@@ -808,9 +665,6 @@ def main():
                         'Unique': [df[col].nunique() for col in df.columns]
                     })
                     st.dataframe(col_info, use_container_width=True)
-    
-    elif menu == "Dataset Management":
-        show_dataset_management()
     
     elif menu == "Data Profiling":
         if st.session_state.df is None:

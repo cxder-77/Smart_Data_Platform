@@ -9,13 +9,16 @@ import matplotlib.pyplot as plt
 import json
 import io
 import base64
+import os
 from datetime import datetime
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, r2_score, mean_squared_error, mean_absolute_error
+from utils.dataset_manager import DatasetManager
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -44,6 +47,10 @@ if 'selected_column_dist' not in st.session_state:
     st.session_state.selected_column_dist = None
 if 'chart_data' not in st.session_state:
     st.session_state.chart_data = {}
+if 'dataset_manager' not in st.session_state:
+    st.session_state.dataset_manager = DatasetManager()
+if 'current_dataset_id' not in st.session_state:
+    st.session_state.current_dataset_id = None
 
 # Theme configuration
 THEMES = {
@@ -245,75 +252,176 @@ def detect_outliers(df, column):
     return outliers, lower_bound, upper_bound
 
 def auto_ml_train(df, target_column, problem_type):
-    """Automatic ML model training"""
+    """
+    Improved Auto ML Training with:
+    - Proper scaling
+    - Baseline check
+    - Feature cleaning
+    - Better evaluation
+    """
+    le_target = None
     try:
-        # Prepare data
-        X = df.drop(columns=[target_column])
-        y = df[target_column]
-        
-        # Handle categorical variables
+        # -----------------------------
+        # 1. Split X and Y
+        # -----------------------------
+        X = df.drop(columns=[target_column]).copy()
+        y = df[target_column].copy()
+
+        # -----------------------------
+        # 2. Remove useless columns
+        # -----------------------------
+        constant_cols = [c for c in X.columns if X[c].nunique() <= 1]
+        if constant_cols:
+            X.drop(columns=constant_cols, inplace=True)
+
+        # -----------------------------
+        # 3. Encode categorical features
+        # -----------------------------
         label_encoders = {}
+
         for col in X.select_dtypes(include=['object']).columns:
             le = LabelEncoder()
             X[col] = le.fit_transform(X[col].astype(str))
             label_encoders[col] = le
-        
+
         # Encode target if classification
-        if problem_type == 'classification':
+        if problem_type == "classification":
             le_target = LabelEncoder()
             y = le_target.fit_transform(y.astype(str))
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
-        # Scale features
+
+        # -----------------------------
+        # 4. Train Test Split
+        # -----------------------------
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y,
+            test_size=0.2,
+            random_state=42
+        )
+
+        # -----------------------------
+        # 5. Scaling (Only for Linear / Logistic)
+        # -----------------------------
         scaler = StandardScaler()
+
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
-        
-        # Train multiple models
+
+        # -----------------------------
+        # 6. Baseline (Mean Prediction)
+        # -----------------------------
+        if problem_type == "regression":
+            baseline_pred = np.full_like(y_test, np.mean(y_train))
+            baseline_r2 = r2_score(y_test, baseline_pred)
+        else:
+            baseline_r2 = None
+
+        # -----------------------------
+        # 7. Models
+        # -----------------------------
         models = {}
         results = {}
-        
-        if problem_type == 'regression':
-            models['Linear Regression'] = LinearRegression()
-            models['Decision Tree'] = DecisionTreeRegressor(random_state=42)
-            models['Random Forest'] = RandomForestRegressor(n_estimators=100, random_state=42)
-            
+
+        if problem_type == "regression":
+
+            models = {
+                "Linear Regression": LinearRegression(),
+                "Decision Tree": DecisionTreeRegressor(random_state=42),
+                "Random Forest": RandomForestRegressor(
+                    n_estimators=200,
+                    max_depth=10,
+                    random_state=42
+                )
+            }
+
             for name, model in models.items():
-                model.fit(X_train_scaled, y_train)
-                y_pred = model.predict(X_test_scaled)
+
+                # Scaling only for Linear
+                if name == "Linear Regression":
+                    model.fit(X_train_scaled, y_train)
+                    y_pred = model.predict(X_test_scaled)
+
+                else:  # Tree Models
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_test)
+
+                r2 = r2_score(y_test, y_pred)
+                mse = mean_squared_error(y_test, y_pred)
+                mae = mean_absolute_error(y_test, y_pred)
+
                 results[name] = {
-                    'model': model,
-                    'r2_score': r2_score(y_test, y_pred),
-                    'mse': mean_squared_error(y_test, y_pred),
-                    'mae': mean_absolute_error(y_test, y_pred),
-                    'predictions': y_pred,
-                    'actual': y_test
+                    "model": model,
+                    "r2_score": r2,
+                    "mse": mse,
+                    "mae": mae,
+                    "baseline_r2": baseline_r2,
+                    "predictions": y_pred,
+                    "actual": y_test
                 }
-        else:  # classification
-            models['Logistic Regression'] = LogisticRegression(random_state=42, max_iter=1000)
-            models['Decision Tree'] = DecisionTreeClassifier(random_state=42)
-            models['Random Forest'] = RandomForestClassifier(n_estimators=100, random_state=42)
-            
+
+        # -----------------------------
+        # 8. Classification
+        # -----------------------------
+        else:
+
+            models = {
+                "Logistic Regression": LogisticRegression(
+                    max_iter=2000,
+                    random_state=42
+                ),
+                "Decision Tree": DecisionTreeClassifier(random_state=42),
+                "Random Forest": RandomForestClassifier(
+                    n_estimators=200,
+                    max_depth=10,
+                    random_state=42
+                )
+            }
+
             for name, model in models.items():
-                model.fit(X_train_scaled, y_train)
-                y_pred = model.predict(X_test_scaled)
+
+                # Scaling only for Logistic
+                if name == "Logistic Regression":
+                    model.fit(X_train_scaled, y_train)
+                    y_pred = model.predict(X_test_scaled)
+
+                else:
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_test)
+
+                acc = accuracy_score(y_test, y_pred)
+                prec = precision_score(
+                    y_test, y_pred,
+                    average="weighted",
+                    zero_division=0
+                )
+                rec = recall_score(
+                    y_test, y_pred,
+                    average="weighted",
+                    zero_division=0
+                )
+                f1 = f1_score(
+                    y_test, y_pred,
+                    average="weighted",
+                    zero_division=0
+                )
+
                 results[name] = {
-                    'model': model,
-                    'accuracy': accuracy_score(y_test, y_pred),
-                    'precision': precision_score(y_test, y_pred, average='weighted', zero_division=0),
-                    'recall': recall_score(y_test, y_pred, average='weighted', zero_division=0),
-                    'f1': f1_score(y_test, y_pred, average='weighted', zero_division=0),
-                    'predictions': y_pred,
-                    'actual': y_test
+                    "model": model,
+                    "accuracy": acc,
+                    "precision": prec,
+                    "recall": rec,
+                    "f1": f1,
+                    "predictions": y_pred,
+                    "actual": y_test
                 }
-        
-        return results, scaler, label_encoders, X.columns.tolist()
-    
+
+        # -----------------------------
+        # 9. Return
+        # -----------------------------
+        return results, scaler, label_encoders, X.columns.tolist(), le_target
+
     except Exception as e:
-        st.error(f"Error in ML training: {str(e)}")
-        return None, None, None, None
+        st.error(f"ML Training Error: {str(e)}")
+        return None, None, None, None, None
 
 def export_to_pdf_html(df, insights, charts):
     """Export analysis as HTML (PDF-ready)"""
@@ -419,6 +527,140 @@ def suggest_visualizations(df):
 
     return suggestions
 
+# Dataset Management Functions
+def show_dataset_management():
+    """Display dataset management interface"""
+    st.markdown("## 📁 Dataset Management")
+    
+    tabs = st.tabs(["Recent Datasets", "Liked Datasets", "Search", "Workspace Stats"])
+    
+    dm = st.session_state.dataset_manager
+    
+    # Tab 1: Recent Datasets
+    with tabs[0]:
+        st.subheader("Recent Datasets")
+        recent = dm.get_recent_datasets(limit=10)
+        
+        if recent:
+            for dataset in recent:
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                
+                with col1:
+                    st.write(f"📊 **{dataset['filename']}**")
+                    st.caption(f"Created: {dataset['created'][:10]} | Size: {dataset['size_mb']} MB | {dataset['rows']} rows × {dataset['cols']} cols")
+                    if dataset['description']:
+                        st.caption(f"📝 {dataset['description']}")
+                    if dataset['tags']:
+                        st.caption(f"Tags: {', '.join(dataset['tags'])}")
+                
+                with col2:
+                    like_btn = st.button(
+                        "❤️" if dataset['liked'] else "🤍",
+                        key=f"like_{dataset['id']}",
+                        help="Like/Unlike"
+                    )
+                    if like_btn:
+                        dm.toggle_like(dataset['id'])
+                        st.rerun()
+                
+                with col3:
+                    if st.button("📝", key=f"rename_{dataset['id']}", help="Rename"):
+                        st.session_state[f"rename_mode_{dataset['id']}"] = True
+                
+                with col4:
+                    if st.button("🗑️", key=f"delete_{dataset['id']}", help="Delete"):
+                        dm.delete_dataset(dataset['id'])
+                        st.success("Dataset deleted!")
+                        st.rerun()
+                
+                # Rename modal
+                if st.session_state.get(f"rename_mode_{dataset['id']}", False):
+                    new_name = st.text_input("New name:", value=dataset['filename'], key=f"new_name_{dataset['id']}")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        if st.button("Save", key=f"save_rename_{dataset['id']}"):
+                            dm.rename_dataset(dataset['id'], new_name)
+                            st.success("Dataset renamed!")
+                            st.session_state[f"rename_mode_{dataset['id']}"] = False
+                            st.rerun()
+                    with col_b:
+                        if st.button("Cancel", key=f"cancel_rename_{dataset['id']}"):
+                            st.session_state[f"rename_mode_{dataset['id']}"] = False
+                            st.rerun()
+                
+                st.divider()
+        else:
+            st.info("No datasets in history yet. Upload a dataset to get started!")
+    
+    # Tab 2: Liked Datasets
+    with tabs[1]:
+        st.subheader("❤️ Liked Datasets")
+        liked = dm.get_liked_datasets()
+        
+        if liked:
+            for dataset in liked:
+                st.write(f"📊 **{dataset['filename']}** ❤️")
+                st.caption(f"Size: {dataset['size_mb']} MB | {dataset['rows']} rows × {dataset['cols']} cols")
+                st.divider()
+        else:
+            st.info("No liked datasets yet!")
+    
+    # Tab 3: Search
+    with tabs[2]:
+        st.subheader("🔍 Search Datasets")
+        search_query = st.text_input("Search by name or tags:")
+        
+        if search_query:
+            results = dm.search_datasets(search_query)
+            if results:
+                st.success(f"Found {len(results)} dataset(s)")
+                for dataset in results:
+                    st.write(f"📊 {dataset['filename']}")
+                    st.caption(f"Size: {dataset['size_mb']} MB | {dataset['rows']} rows")
+            else:
+                st.warning("No datasets found matching your search")
+    
+    # Tab 4: Workspace Statistics
+    with tabs[3]:
+        st.subheader("📊 Workspace Statistics")
+        stats = dm.get_statistics()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Datasets", stats['total_datasets'])
+        with col2:
+            st.metric("Total Size (MB)", stats['total_size_mb'])
+        with col3:
+            st.metric("Average Size (MB)", stats['average_size_mb'])
+        
+        st.divider()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Rows", stats['total_rows'])
+        with col2:
+            st.metric("Liked Datasets", stats['liked_count'])
+        with col3:
+            st.metric("Versions Available", stats['total_datasets'])
+
+
+def add_current_dataset_to_history(filename: str, filepath: str, df: pd.DataFrame):
+    """Add current dataset to history"""
+    file_size = os.path.getsize(filepath) / (1024 * 1024) if os.path.exists(filepath) else 0
+    
+    dm = st.session_state.dataset_manager
+    dataset = dm.add_dataset(
+        filename=filename,
+        filepath=filepath,
+        rows=len(df),
+        cols=len(df.columns),
+        file_size=file_size,
+        description="Uploaded dataset"
+    )
+    
+    st.session_state.current_dataset_id = dataset['id']
+    return dataset
+
 # Main App
 def main():
     # Sidebar
@@ -429,6 +671,7 @@ def main():
         menu_items = {
             "Home": "fa-home",
             "Upload Data": "fa-cloud-upload-alt",
+            "Dataset Management": "fa-folder-open",
             "Data Profiling": "fa-search",
             "Visualizations": "fa-chart-pie",
             "Data Cleaning": "fa-broom",
@@ -542,6 +785,12 @@ def main():
                     st.session_state.original_df = df.copy()
                     st.success(f"✓ Successfully loaded {len(df)} rows and {len(df.columns)} columns!")
                     
+                    # Add to dataset history
+                    temp_path = f"temp_{uploaded_file.name}"
+                    with open(temp_path, 'wb') as f:
+                        f.write(uploaded_file.getbuffer())
+                    add_current_dataset_to_history(uploaded_file.name, temp_path, df)
+                    
                     st.subheader("Data Preview")
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Rows", len(df))
@@ -559,6 +808,9 @@ def main():
                         'Unique': [df[col].nunique() for col in df.columns]
                     })
                     st.dataframe(col_info, use_container_width=True)
+    
+    elif menu == "Dataset Management":
+        show_dataset_management()
     
     elif menu == "Data Profiling":
         if st.session_state.df is None:
@@ -684,7 +936,7 @@ def main():
         df = st.session_state.df
 
         # Smart suggestion system for first-time users
-        st.info("💡 **Pro Tip**: Below are AI-recommended visualizations based on your data. Click 'Use This' to add them!")
+        st.info("💡 **Pro Tip**: Below are recommended visualizations based on your data. Click 'Use This' to add them!")
         
         suggestions = suggest_visualizations(df)
         
@@ -780,21 +1032,27 @@ def main():
             if viz_type == "Bar Chart":
                 c1, c2, c3 = st.columns(3)
                 with c1:
+                    x_options = categorical_cols if categorical_cols else all_cols
                     x_col = st.selectbox(
                         "X-axis",
-                        categorical_cols if categorical_cols else all_cols,
+                        x_options,
+                        index=x_options.index(cfg["x"]) if cfg["x"] in x_options else 0,
                         key=f"x_{idx}",
                     )
                 with c2:
+                    y_options = numeric_cols if numeric_cols else all_cols
                     y_col = st.selectbox(
                         "Y-axis",
-                        numeric_cols if numeric_cols else all_cols,
+                        y_options,
+                        index=y_options.index(cfg["y"]) if cfg["y"] in y_options else 0,
                         key=f"y_{idx}",
                     )
                 with c3:
+                    color_options = [None] + categorical_cols
                     color_col = st.selectbox(
                         "Color by (optional)",
-                        [None] + categorical_cols,
+                        color_options,
+                        index=color_options.index(cfg["color"]) if cfg["color"] in color_options else 0,
                         key=f"color_{idx}",
                     )
 
@@ -813,13 +1071,15 @@ def main():
             elif viz_type == "Line Chart":
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    x_col = st.selectbox("X-axis", all_cols, key=f"x_{idx}")
+                    x_col = st.selectbox("X-axis", all_cols, index=all_cols.index(cfg["x"]) if cfg["x"] in all_cols else 0, key=f"x_{idx}")
                 with c2:
-                    y_col = st.selectbox("Y-axis", numeric_cols, key=f"y_{idx}")
+                    y_col = st.selectbox("Y-axis", numeric_cols, index=numeric_cols.index(cfg["y"]) if cfg["y"] in numeric_cols else 0, key=f"y_{idx}")
                 with c3:
+                    color_options = [None] + categorical_cols
                     color_col = st.selectbox(
                         "Group by (optional)",
-                        [None] + categorical_cols,
+                        color_options,
+                        index=color_options.index(cfg["color"]) if cfg["color"] in color_options else 0,
                         key=f"color_{idx}",
                     )
 
@@ -838,15 +1098,19 @@ def main():
             elif viz_type == "Pie Chart":
                 c1, c2 = st.columns(2)
                 with c1:
+                    names_options = categorical_cols if categorical_cols else all_cols
                     names_col = st.selectbox(
                         "Categories",
-                        categorical_cols if categorical_cols else all_cols,
+                        names_options,
+                        index=names_options.index(cfg["x"]) if cfg["x"] in names_options else 0,
                         key=f"names_{idx}",
                     )
                 with c2:
+                    values_options = numeric_cols if numeric_cols else all_cols
                     values_col = st.selectbox(
                         "Values",
-                        numeric_cols if numeric_cols else all_cols,
+                        values_options,
+                        index=values_options.index(cfg["y"]) if cfg["y"] in values_options else 0,
                         key=f"values_{idx}",
                     )
 
@@ -868,24 +1132,28 @@ def main():
                     c1, c2 = st.columns(2)
                     with c1:
                         x_col = st.selectbox(
-                            "X-axis", numeric_cols, key=f"x_{idx}"
+                            "X-axis", numeric_cols, index=numeric_cols.index(cfg["x"]) if cfg["x"] in numeric_cols else 0, key=f"x_{idx}"
                         )
                     with c2:
                         y_col = st.selectbox(
-                            "Y-axis", numeric_cols, key=f"y_{idx}"
+                            "Y-axis", numeric_cols, index=numeric_cols.index(cfg["y"]) if cfg["y"] in numeric_cols else 0, key=f"y_{idx}"
                         )
 
                     c3, c4 = st.columns(2)
                     with c3:
+                        color_options = [None] + categorical_cols + numeric_cols
                         color_col = st.selectbox(
                             "Color by",
-                            [None] + categorical_cols + numeric_cols,
+                            color_options,
+                            index=color_options.index(cfg["color"]) if cfg["color"] in color_options else 0,
                             key=f"color_{idx}",
                         )
                     with c4:
+                        size_options = [None] + numeric_cols
                         size_col = st.selectbox(
                             "Size by",
-                            [None] + numeric_cols,
+                            size_options,
+                            index=size_options.index(cfg["size"]) if cfg["size"] in size_options else 0,
                             key=f"size_{idx}",
                         )
 
@@ -914,7 +1182,7 @@ def main():
                     c1, c2 = st.columns(2)
                     with c1:
                         col = st.selectbox(
-                            "Select column", numeric_cols, key=f"hist_{idx}"
+                            "Select column", numeric_cols, index=numeric_cols.index(cfg["x"]) if cfg["x"] in numeric_cols else 0, key=f"hist_{idx}"
                         )
                     with c2:
                         bins = st.slider(
@@ -944,12 +1212,14 @@ def main():
                     c1, c2 = st.columns(2)
                     with c1:
                         y_col = st.selectbox(
-                            "Value column", numeric_cols, key=f"box_y_{idx}"
+                            "Value column", numeric_cols, index=numeric_cols.index(cfg["y"]) if cfg["y"] in numeric_cols else 0, key=f"box_y_{idx}"
                         )
                     with c2:
+                        x_options = [None] + categorical_cols
                         x_col = st.selectbox(
                             "Group by (optional)",
-                            [None] + categorical_cols,
+                            x_options,
+                            index=x_options.index(cfg["x"]) if cfg["x"] in x_options else 0,
                             key=f"box_x_{idx}",
                         )
 
@@ -979,7 +1249,7 @@ def main():
                     selected_cols = st.multiselect(
                         "Select columns (max 5)",
                         numeric_cols,
-                        default=numeric_cols[: min(3, len(numeric_cols))],
+                        default=cfg.get("cols", numeric_cols[: min(3, len(numeric_cols))]),
                         key=f"pair_{idx}",
                     )
                     cfg["cols"] = selected_cols
@@ -1343,7 +1613,7 @@ def main():
                 
                 if st.button("Train Models"):
                     with st.spinner("Training models... This may take a moment..."):
-                        results, scaler, encoders, feature_names = auto_ml_train(
+                        results, scaler, encoders, feature_names, le_target = auto_ml_train(
                             train_df, target_col, problem_type
                         )
                         
@@ -1352,6 +1622,7 @@ def main():
                             st.session_state.ml_scaler = scaler
                             st.session_state.ml_encoders = encoders
                             st.session_state.ml_features = feature_names
+                            st.session_state.ml_target_encoder = le_target
                             st.success("✓ Training complete!")
                 
                 if st.session_state.ml_results:
@@ -1431,22 +1702,90 @@ def main():
                         input_data[feature] = st.text_input(f"{feature}", key=f"input_{feature}")
                 
                 if st.button("Predict"):
+
                     try:
+                        # -------------------------
+                        # 1. Create Input DataFrame
+                        # -------------------------
                         input_df = pd.DataFrame([input_data])
-                        
+
+                        # Convert to numeric when possible
+                        for col in input_df.columns:
+                            try:
+                                input_df[col] = pd.to_numeric(input_df[col])
+                            except:
+                                pass
+
+                        # -------------------------
+                        # 2. Encode Categorical
+                        # -------------------------
+                        encoders = st.session_state.ml_encoders
+
+                        for col, encoder in encoders.items():
+                            if col in input_df.columns:
+                                input_df[col] = encoder.transform(
+                                    input_df[col].astype(str)
+                                )
+
+                        # -------------------------
+                        # 3. Arrange Column Order
+                        # -------------------------
+                        input_df = input_df[st.session_state.ml_features]
+
+                        # -------------------------
+                        # 4. Scale if Needed
+                        # -------------------------
+                        scaler = st.session_state.ml_scaler
+
+                        input_scaled = scaler.transform(input_df)
+
+                        # -------------------------
+                        # 5. Select Best Model
+                        # -------------------------
                         results = st.session_state.ml_results
-                        if st.session_state.problem_type == 'regression':
-                            best_model_name = max(results.items(), key=lambda x: x[1]['r2_score'])[0]
+
+                        if st.session_state.problem_type == "regression":
+                            best_model_name = max(
+                                results.items(),
+                                key=lambda x: x[1]["r2_score"]
+                            )[0]
                         else:
-                            best_model_name = max(results.items(), key=lambda x: x[1]['accuracy'])[0]
-                        
-                        best_model = results[best_model_name]['model']
-                        
-                        st.success(f"Using: **{best_model_name}**")
-                        st.info("🎯 Prediction feature coming soon! (Requires proper encoding of input)")
-                        
+                            best_model_name = max(
+                                results.items(),
+                                key=lambda x: x[1]["accuracy"]
+                            )[0]
+
+                        best_model = results[best_model_name]["model"]
+
+                        # -------------------------
+                        # 6. Predict
+                        # -------------------------
+                        if best_model_name == "Linear Regression" or best_model_name == "Logistic Regression":
+                            prediction = best_model.predict(input_scaled)
+                        else:
+                            prediction = best_model.predict(input_df)
+
+                        # -------------------------
+                        # 7. Decode Target (If Needed)
+                        # -------------------------
+                        if st.session_state.problem_type == "classification":
+                            target_encoder = st.session_state.ml_target_encoder
+                            prediction = target_encoder.inverse_transform(
+                                prediction.astype(int)
+                            )
+
+                        # -------------------------
+                        # 8. Show Result
+                        # -------------------------
+                        st.success(f"✅ Using: {best_model_name}")
+
+                        if st.session_state.problem_type == "regression":
+                            st.metric("Predicted Value", f"{prediction[0]:,.2f}")
+                        else:
+                            st.metric("Predicted Class", prediction[0])
+
                     except Exception as e:
-                        st.error(f"Error: {str(e)}")
+                        st.error(f"Prediction Error: {str(e)}")
     
     elif menu == "Chat with Data":
         if st.session_state.df is None:

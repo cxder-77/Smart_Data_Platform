@@ -1,0 +1,102 @@
+{
+  "datasets": [
+    {
+      "id": 1,
+      "filename": "sales_dataset_new.csv",
+      "filepath": "temp_sales_dataset_new.csv",
+      "created": "2026-01-27T19:38:18.844669",
+      "modified": "2026-01-27T19:38:18.844669",
+      "rows": 300,
+      "cols": 10,
+      "size_mb": 0.02,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    },
+    {
+      "id": 2,
+      "filename": "Filtered_Sales.xlsx",
+      "filepath": "temp_Filtered_Sales.xlsx",
+      "created": "2026-01-27T19:41:44.876507",
+      "modified": "2026-01-27T19:41:44.876507",
+      "rows": 148,
+      "cols": 10,
+      "size_mb": 0.03,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    },
+    {
+      "id": 3,
+      "filename": "sales_dataset_new.csv",
+      "filepath": "temp_sales_dataset_new.csv",
+      "created": "2026-01-27T19:47:03.606799",
+      "modified": "2026-01-27T19:47:03.606799",
+      "rows": 300,
+      "cols": 10,
+      "size_mb": 0.02,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    },
+    {
+      "id": 4,
+      "filename": "sales_dataset_new.csv",
+      "filepath": "temp_sales_dataset_new.csv",
+      "created": "2026-01-28T17:05:11.677894",
+      "modified": "2026-01-28T17:05:11.677894",
+      "rows": 300,
+      "cols": 10,
+      "size_mb": 0.02,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    },
+    {
+      "id": 5,
+      "filename": "sales_dataset_new.csv",
+      "filepath": "temp_sales_dataset_new.csv",
+      "created": "2026-01-28T17:09:42.967782",
+      "modified": "2026-01-28T17:09:42.967782",
+      "rows": 300,
+      "cols": 10,
+      "size_mb": 0.02,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    },
+    {
+      "id": 6,
+      "filename": "student-por.csv",
+      "filepath": "temp_student-por.csv",
+      "created": "2026-01-28T17:24:45.966597",
+      "modified": "2026-01-28T17:24:45.966597",
+      "rows": 649,
+      "cols": 33,
+      "size_mb": 0.07,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    },
+    {
+      "id": 7,
+      "filename": "student-por.csv",
+      "filepath": "temp_student-por.csv",
+      "created": "2026-01-28T17:32:32.703548",
+      "modified": "2026-01-28T17:32:32.703548",
+      "rows": 649,
+      "cols": 33,
+      "size_mb": 0.07,
+      "description": "Uploaded dataset",
+      "liked": false,
+      "version": 1,
+      "tags": []
+    }
+  ]
+}

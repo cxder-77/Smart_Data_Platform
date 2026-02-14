@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(
-    page_title="AI Data Analysis Studio",
+    page_title="Data Analysis Studio",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -175,8 +175,8 @@ def load_data(file, file_type):
         st.error(f"Error loading file: {str(e)}")
         return None
 
-def generate_ai_insights(df):
-    """Generate AI-powered insights about the dataset"""
+def generate_insights(df):
+    """Generate dataset insights about the dataset"""
     insights = []
     
     # Basic statistics insights
@@ -437,7 +437,7 @@ def export_to_pdf_html(df, insights, charts):
         <h1>Data Analysis Report</h1>
         <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         
-        <h2>AI Insights</h2>
+        <h2>Insights</h2>
         {''.join([f'<div class="insight">{insight}</div>' for insight in insights])}
         
         <h2>Data Preview</h2>
@@ -538,7 +538,7 @@ def main():
             "Data Profiling": "fa-search",
             "Visualizations": "fa-chart-pie",
             "Data Cleaning": "fa-broom",
-            "AI Insights": "fa-brain",
+            "Insights": "fa-lightbulb",
             "ML Predictions": "fa-robot",
             "Chat with Data": "fa-comments",
             "Export Report": "fa-file-download"
@@ -570,7 +570,7 @@ def main():
     
     # Main content
     if menu == "Home":
-        st.markdown('<h1 class="main-header"><i class="fas fa-chart-line"></i> AI Data Analysis Studio</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 class="main-header"><i class="fas fa-chart-line"></i> Data Analysis Studio</h1>', unsafe_allow_html=True)
         st.markdown("### Transform Your Data into Insights — No Coding Required!")
         
         # Light theme caution
@@ -602,8 +602,8 @@ def main():
         with col4:
             st.markdown('''
             <div class="metric-card">
-                <i class="fas fa-brain fa-3x"></i>
-                <p>AI Insights</p>
+                <i class="fas fa-lightbulb fa-3x"></i>
+                <p>Insights</p>
             </div>
             ''', unsafe_allow_html=True)
         
@@ -617,7 +617,7 @@ def main():
             - <i class="fas fa-search-plus"></i> **Automated EDA**: One-click profiling
             - <i class="fas fa-chart-area"></i> **Interactive Charts**: Drag & drop visualization
             - <i class="fas fa-tools"></i> **Smart Cleaning**: Auto-handle missing data
-            - <i class="fas fa-lightbulb"></i> **AI Insights**: Natural language summaries
+            - <i class="fas fa-lightbulb"></i> **Insights**: Natural language summaries
             """, unsafe_allow_html=True)
         with col2:
             st.markdown("""
@@ -1367,16 +1367,16 @@ def main():
             st.subheader("Current Data Preview")
             st.dataframe(df.head(), use_container_width=True)
     
-    elif menu == "AI Insights":
+    elif menu == "Insights":
         if st.session_state.df is None:
             st.warning("⚠ Please upload data first!")
             return
         
-        st.markdown('<h2><i class="fas fa-brain"></i> AI-Powered Insights</h2>', unsafe_allow_html=True)
+        st.markdown('<h2><i class="fas fa-lightbulb"></i> Insights</h2>', unsafe_allow_html=True)
         df = st.session_state.df
         
         with st.spinner("Analyzing your data..."):
-            insights = generate_ai_insights(df)
+                insights = generate_insights(df)
         
         st.subheader("Key Insights")
         for insight in insights:
@@ -1722,18 +1722,18 @@ def main():
             st.subheader("Generate PDF Report")
             
             report_title = st.text_input("Report Title", "Data Analysis Report")
-            author = st.text_input("Author Name", "AI Data Studio")
+            author = st.text_input("Author Name", "Data Studio")
             
             include_options = st.multiselect("Include in report:", [
                 "Summary Statistics",
                 "Missing Values Analysis",
-                "AI Insights",
+                "Insights",
                 "Data Preview"
-            ], default=["AI Insights", "Summary Statistics"])
+            ], default=["Insights", "Summary Statistics"])
             
             if st.button("Generate HTML Report"):
                 with st.spinner("Generating report..."):
-                    insights = generate_ai_insights(df)
+                    insights = generate_insights(df)
                     html_report = export_to_pdf_html(df, insights, [])
                     
                     st.download_button(

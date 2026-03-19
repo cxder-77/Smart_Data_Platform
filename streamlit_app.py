@@ -8,6 +8,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import json
 import io
+import hashlib
+from enum import Enum
 import base64
 import os
 from datetime import datetime
@@ -47,6 +49,13 @@ if 'selected_column_dist' not in st.session_state:
     st.session_state.selected_column_dist = None
 if 'chart_data' not in st.session_state:
     st.session_state.chart_data = {}
+if 'generated_insights' not in st.session_state:
+    st.session_state.generated_insights = []
+if 'insights_ui_state' not in st.session_state:
+    # Consolidated: {insight_id: {'hidden': bool, 'custom': dict}}
+    st.session_state.insights_ui_state = {}
+if 'last_df_key' not in st.session_state:
+    st.session_state.last_df_key = None
 
 # Theme configuration
 THEMES = {
@@ -73,6 +82,43 @@ THEMES = {
         'shadow': 'rgba(0,0,0,0.5)'
     }
 }
+
+# ==================== CHART TYPE CONSTANTS ====================
+class ChartType(str, Enum):
+    """Enumeration of supported chart types"""
+    BAR = 'bar'
+    HISTOGRAM = 'histogram'
+    SCATTER = 'scatter'
+    BOX = 'box'
+    HEATMAP = 'heatmap'
+    LINE = 'line'
+    PIE = 'pie'
+    PAIR = 'pair'
+
+# Column filtering configuration
+MEANINGLESS_COLUMN_PATTERNS = {'id', 'index', 'idx', 'count', 'pk', 'rowid', 'serial', 'sequence', 'no.', 'num'}
+
+def is_meaningful_column(col_name):
+    """Check if column name suggests meaningful data (not ID/index)"""
+    return not any(word in col_name.lower() for word in MEANINGLESS_COLUMN_PATTERNS)
+
+def get_dataframe_key(df):
+    """Get a cheap cache key for dataframe (metadata only, not data)"""
+    try:
+        key_input = str((df.shape, tuple(df.columns), tuple(df.dtypes)))
+        return hashlib.md5(key_input.encode()).hexdigest()
+    except:
+        return None
+
+def get_numeric_columns(df):
+    """Get list of numeric columns"""
+    return df.select_dtypes(include=[np.number]).columns.tolist()
+
+def get_categorical_columns(df):
+    """Get list of categorical columns"""
+    return df.select_dtypes(include=['object', 'category']).columns.tolist()
+
+# ==================== END CONSTANTS ====================
 
 def get_theme_css():
     """Generate CSS based on current theme"""
@@ -224,18 +270,389 @@ def generate_insights(df):
     
     return insights
 
-def create_correlation_heatmap(df):
-    """Create correlation heatmap"""
+def create_correlation_heatmap_plotly(df):
+    """Create interactive correlation heatmap using Plotly (for manual visualization creation)"""
     numeric_df = df.select_dtypes(include=[np.number])
     if len(numeric_df.columns) > 1:
         corr = numeric_df.corr()
-        fig = px.imshow(corr, 
-                       text_auto=True, 
+        fig = px.imshow(corr,
+                       text_auto=True,
                        aspect="auto",
                        color_continuous_scale='RdBu_r',
                        title="Correlation Heatmap")
         return fig
     return None
+
+def create_correlation_heatmap_publication(df):
+    """
+    Create publication-quality correlation heatmap using seaborn/matplotlib.
+    Features:
+    - Lower triangular mask for clean appearance
+    - Diverging color palette centered at zero
+    - 2-decimal precision annotations
+    - Professional sizing and labels
+    - 45-degree x-axis rotation, horizontal y-axis
+    """
+    numeric_cols = get_numeric_columns(df)
+    if len(numeric_cols) < 2:
+        return None
+
+    numeric_df = df[numeric_cols]
+    corr = numeric_df.corr()
+
+    # Remove highly redundant columns efficiently (correlation > 0.95)
+    # Use set for O(1) lookups instead of O(n) list lookups
+    removed_cols = set()
+    cols_to_keep = []
+
+    for col in corr.columns:
+        if col not in removed_cols:
+            cols_to_keep.append(col)
+            # Vectorized comparison avoids nested loop O(n^2)
+            highly_corr = (corr[col].abs() > 0.95) & (corr.index != col)
+            new_removed = set(corr.index[highly_corr].tolist())
+            removed_cols.update(new_removed - set(cols_to_keep))
+
+    corr = corr.loc[cols_to_keep, cols_to_keep]
+
+    # Create figure with appropriate size
+    fig, ax = plt.subplots(figsize=(12, 10))
+
+    # Create lower triangular mask
+    mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+
+    # Create heatmap
+    sns.heatmap(
+        corr,
+        mask=mask,
+        annot=True,
+        fmt='.2f',
+        cmap='RdBu_r',
+        center=0,
+        vmin=-1, vmax=1,
+        square=True,
+        linewidths=0.5,
+        cbar_kws={'label': 'Correlation Coefficient', 'shrink': 0.8},
+        ax=ax,
+        annot_kws={'size': 11},
+        xticklabels=True,
+        yticklabels=True
+    )
+
+    # Improve label readability
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', fontsize=12)
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=12)
+    ax.set_title('Correlation Heatmap (Publication Quality)', fontsize=14, pad=20, fontweight='bold')
+
+    # Tight layout to prevent label cutoff
+    plt.tight_layout()
+
+    return fig
+
+# Keep original function name for backward compatibility (used in heatmap chart creation)
+def create_correlation_heatmap(df):
+    """Alias for plotly version - used when user manually creates heatmap chart"""
+    return create_correlation_heatmap_plotly(df)
+
+# ==================== CHART GENERATION FUNCTIONS FOR AUTO-INSIGHTS ====================
+
+def generate_bar_chart_insight(df, categorical_col=None):
+    """
+    Generate bar chart insight for categorical data.
+
+    Args:
+        df: DataFrame
+        categorical_col: Optional categorical column. If None, auto-selects best option.
+
+    Returns:
+        dict with title, description, figure
+    """
+    try:
+        categorical_cols = get_categorical_columns(df)
+
+        if not categorical_cols:
+            return None
+
+        if categorical_col is None:
+            # Auto-select best categorical column (reasonable cardinality)
+            valid_cats = [c for c in categorical_cols if 2 <= df[c].nunique() <= 20]
+            categorical_col = valid_cats[0] if valid_cats else categorical_cols[0]
+
+        # Use single value_counts() call, not duplicate
+        value_counts = df[categorical_col].value_counts()
+
+        if len(value_counts) > 30:
+            # Too many categories, show top 15
+            top_values = value_counts.head(15)
+            fig = px.bar(
+                x=top_values.index,
+                y=top_values.values,
+                title=f'Top Categories in {categorical_col}',
+                labels={'x': categorical_col, 'y': 'Count'},
+                color=top_values.values,
+                color_continuous_scale='Viridis'
+            )
+            description = f'Bar chart showing top 15 categories in {categorical_col} ({len(value_counts)} total categories)'
+        else:
+            fig = px.bar(
+                x=value_counts.index,
+                y=value_counts.values,
+                title=f'Categories in {categorical_col}',
+                labels={'x': categorical_col, 'y': 'Count'},
+                color=value_counts.values,
+                color_continuous_scale='Viridis'
+            )
+            description = f'Bar chart showing distribution of {len(value_counts)} categories in {categorical_col}'
+
+        return {
+            'type': ChartType.BAR.value,
+            'title': f'Categorical Analysis - {categorical_col}',
+            'description': description,
+            'figure': fig,
+            'config': {'column': categorical_col}
+        }
+    except Exception as e:
+        print(f"Error generating bar chart: {e}")
+        return None
+
+def generate_histogram_insight(df, numeric_col=None):
+    """
+    Generate histogram insight for numeric distribution.
+
+    Args:
+        df: DataFrame
+        numeric_col: Optional numeric column. If None, auto-selects first numeric.
+
+    Returns:
+        dict with title, description, figure
+    """
+    try:
+        numeric_cols = get_numeric_columns(df)
+
+        if not numeric_cols:
+            return None
+
+        if numeric_col is None:
+            numeric_col = numeric_cols[0]
+
+        # Remove NaN values
+        clean_data = df[numeric_col].dropna()
+
+        fig = px.histogram(
+            df,
+            x=numeric_col,
+            nbins=30,
+            marginal='box',
+            title=f'Distribution of {numeric_col}',
+            labels={'count': 'Frequency'}
+        )
+
+        description = f'Histogram showing distribution of {numeric_col} with {len(clean_data)} valid values (mean: {clean_data.mean():.2f}, std: {clean_data.std():.2f})'
+
+        return {
+            'type': ChartType.HISTOGRAM.value,
+            'title': f'Distribution Analysis - {numeric_col}',
+            'description': description,
+            'figure': fig,
+            'config': {'column': numeric_col}
+        }
+    except Exception as e:
+        print(f"Error generating histogram: {e}")
+        return None
+
+def generate_scatter_plot_insight(df, x_col=None, y_col=None):
+    """
+    Generate scatter plot insight for relationship between two numeric variables.
+
+    Args:
+        df: DataFrame
+        x_col: Optional x-axis column. If None, auto-selects.
+        y_col: Optional y-axis column. If None, auto-selects.
+
+    Returns:
+        dict with title, description, figure
+    """
+    try:
+        numeric_cols = get_numeric_columns(df)
+
+        if len(numeric_cols) < 2:
+            return None
+
+        if x_col is None or y_col is None:
+            x_col, y_col = numeric_cols[0], numeric_cols[1]
+
+        # Remove NaN values
+        clean_df = df[[x_col, y_col]].dropna()
+
+        if len(clean_df) < 2:
+            return None
+
+        fig = px.scatter(
+            clean_df,
+            x=x_col,
+            y=y_col,
+            title=f'{y_col} vs {x_col}',
+            trendline='ols',
+            trendline_color_override='red'
+        )
+
+        # Calculate correlation
+        corr = clean_df[x_col].corr(clean_df[y_col])
+
+        description = f'Scatter plot showing relationship between {x_col} and {y_col} (correlation: {corr:.3f})'
+
+        return {
+            'type': ChartType.SCATTER.value,
+            'title': f'Relationship Analysis - {x_col} vs {y_col}',
+            'description': description,
+            'figure': fig,
+            'config': {'x_column': x_col, 'y_column': y_col}
+        }
+    except Exception as e:
+        print(f"Error generating scatter plot: {e}")
+        return None
+
+def generate_box_plot_insight(df, numeric_col=None):
+    """
+    Generate box plot for outlier detection and distribution analysis.
+
+    Args:
+        df: DataFrame
+        numeric_col: Optional numeric column. If None, auto-selects first numeric.
+
+    Returns:
+        dict with title, description, figure
+    """
+    try:
+        numeric_cols = get_numeric_columns(df)
+        categorical_cols = get_categorical_columns(df)
+
+        if not numeric_cols:
+            return None
+
+        if numeric_col is None:
+            numeric_col = numeric_cols[0]
+
+        # Create box plot
+        if categorical_cols:
+            # Group by first categorical column if available
+            cat_col = [c for c in categorical_cols if 2 <= df[c].nunique() <= 10]
+            if cat_col:
+                cat_col = cat_col[0]
+                fig = px.box(df, x=cat_col, y=numeric_col, title=f'{numeric_col} by {cat_col}')
+                description = f'Box plot showing {numeric_col} distribution across {df[cat_col].nunique()} groups in {cat_col}'
+            else:
+                fig = px.box(df, y=numeric_col, title=f'Distribution and Outliers in {numeric_col}')
+                description = f'Box plot for {numeric_col} showing distribution, quartiles, and potential outliers'
+        else:
+            fig = px.box(df, y=numeric_col, title=f'Distribution and Outliers in {numeric_col}')
+            description = f'Box plot for {numeric_col} showing distribution, quartiles, and potential outliers'
+
+        return {
+            'type': ChartType.BOX.value,
+            'title': f'Outlier Detection - {numeric_col}',
+            'description': description,
+            'figure': fig,
+            'config': {'column': numeric_col}
+        }
+    except Exception as e:
+        print(f"Error generating box plot: {e}")
+        return None
+
+def generate_correlation_heatmap_insight(df):
+    """
+    Generate publication-quality correlation heatmap insight.
+
+    Args:
+        df: DataFrame
+
+    Returns:
+        dict with title, description, figure
+    """
+    try:
+        numeric_cols = get_numeric_columns(df)
+
+        if len(numeric_cols) < 2:
+            return None
+
+        fig = create_correlation_heatmap_publication(df)
+
+        if fig is None:
+            return None
+
+        description = f'Publication-quality correlation heatmap showing relationships between {len(numeric_cols)} numeric variables (lower triangle, centered diverging scale)'
+
+        return {
+            'type': ChartType.HEATMAP.value,
+            'title': 'Correlation Analysis',
+            'description': description,
+            'figure': fig,
+            'config': {'numeric_columns': len(numeric_cols)}
+        }
+    except Exception as e:
+        print(f"Error generating correlation heatmap: {e}")
+        return None
+
+def auto_detect_and_generate_insights(df):
+    """
+    Automatically detect data characteristics and generate appropriate visualizations.
+
+    Args:
+        df: DataFrame
+
+    Returns:
+        list of insight dicts with structure:
+        {
+            'type': str,
+            'title': str,
+            'description': str,
+            'figure': plotly_fig or matplotlib_fig,
+            'config': dict
+        }
+    """
+    insights = []
+
+    if df is None or df.empty:
+        return insights
+
+    try:
+        # Cache column selections (avoid repeated select_dtypes calls)
+        numeric_cols = get_numeric_columns(df)
+        categorical_cols = get_categorical_columns(df)
+
+        # Filter meaningful columns (skip ID, index, etc) - UNIFIED FUNCTION
+        meaningful_numeric = [c for c in numeric_cols if is_meaningful_column(c)]
+        meaningful_categorical = [c for c in categorical_cols if is_meaningful_column(c)]
+
+        # 1. Bar Chart (Categorical)
+        if meaningful_categorical:
+            insight = generate_bar_chart_insight(df, meaningful_categorical[0])
+            if insight:
+                insights.append(insight)
+
+        # 2. Histogram (Numeric Distribution)
+        if meaningful_numeric:
+            insight = generate_histogram_insight(df, meaningful_numeric[0])
+            if insight:
+                insights.append(insight)
+
+        # 3. Box Plot (Outlier Detection)
+        if meaningful_numeric:
+            insight = generate_box_plot_insight(df, meaningful_numeric[0])
+            if insight:
+                insights.append(insight)
+
+        # 4. Scatter Plot (Numeric Relationship)
+        if len(meaningful_numeric) >= 2:
+            insight = generate_scatter_plot_insight(df, meaningful_numeric[0], meaningful_numeric[1])
+            if insight:
+                insights.append(insight)
+
+        return insights
+
+    except Exception as e:
+        print(f"Error in auto-detection: {e}")
+        return insights
 
 def detect_outliers(df, column):
     """Detect outliers using IQR method"""
@@ -420,35 +837,297 @@ def auto_ml_train(df, target_column, problem_type):
         return None, None, None, None, None
 
 def export_to_pdf_html(df, insights, charts):
-    """Export analysis as HTML (PDF-ready)"""
+    """Export analysis as HTML (PDF-ready) with embedded charts and summaries"""
+
+    # Generate chart summaries
+    chart_summaries = []
+    chart_html = ""
+
+    if charts:
+        for i, chart_info in enumerate(charts):
+            if isinstance(chart_info, dict) and 'figure' in chart_info:
+                fig = chart_info['figure']
+                title = chart_info.get('title', f'Chart {i+1}')
+                description = chart_info.get('description', 'Analysis chart')
+
+                # Convert plotly figure to HTML
+                chart_div = fig.to_html(full_html=False, include_plotlyjs='cdn')
+
+                chart_html += f"""
+                <div class="chart-container">
+                    <h3>{title}</h3>
+                    <p class="chart-description">{description}</p>
+                    <div class="chart-wrapper">
+                        {chart_div}
+                    </div>
+                </div>
+                """
+
+                # Generate summary for this chart
+                chart_summaries.append(f"• {title}: {description}")
+
+    # Create charts summary section
+    charts_summary_html = ""
+    if chart_summaries:
+        charts_summary_html = f"""
+        <h2>Charts Summary</h2>
+        <div class="charts-summary">
+            <p>The following charts were generated as part of this analysis:</p>
+            <ul>
+                {"".join([f"<li>{summary}</li>" for summary in chart_summaries])}
+            </ul>
+            <p><strong>Total Charts:</strong> {len(chart_summaries)}</p>
+        </div>
+        """
+
     html_content = f"""
     <html>
     <head>
         <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-            h1 {{ color: #667eea; }}
-            .insight {{ background: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 5px; }}
-            table {{ border-collapse: collapse; width: 100%; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-            th {{ background-color: #667eea; color: white; }}
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 40px;
+                line-height: 1.6;
+                color: #333;
+            }}
+            h1 {{
+                color: #667eea;
+                border-bottom: 3px solid #667eea;
+                padding-bottom: 10px;
+            }}
+            h2 {{
+                color: #4a5568;
+                margin-top: 30px;
+                border-bottom: 2px solid #e2e8f0;
+                padding-bottom: 5px;
+            }}
+            h3 {{
+                color: #2d3748;
+                margin-top: 20px;
+            }}
+            .insight {{
+                background: #f7fafc;
+                padding: 15px;
+                margin: 10px 0;
+                border-radius: 8px;
+                border-left: 4px solid #667eea;
+            }}
+            .chart-container {{
+                margin: 30px 0;
+                padding: 20px;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .chart-description {{
+                color: #718096;
+                font-style: italic;
+                margin-bottom: 15px;
+            }}
+            .chart-wrapper {{
+                background: #f8f9fa;
+                padding: 10px;
+                border-radius: 5px;
+            }}
+            .charts-summary {{
+                background: #edf2f7;
+                padding: 20px;
+                border-radius: 8px;
+                margin: 20px 0;
+            }}
+            table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin: 20px 0;
+                background: #ffffff;
+            }}
+            th, td {{
+                border: 1px solid #e2e8f0;
+                padding: 12px;
+                text-align: left;
+            }}
+            th {{
+                background-color: #667eea;
+                color: white;
+                font-weight: bold;
+            }}
+            tr:nth-child(even) {{
+                background-color: #f8f9fa;
+            }}
+            .summary-stats {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 20px;
+                margin: 20px 0;
+            }}
+            .stat-card {{
+                background: #ffffff;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                border: 1px solid #e2e8f0;
+                min-width: 150px;
+            }}
+            .stat-value {{
+                font-size: 24px;
+                font-weight: bold;
+                color: #667eea;
+            }}
+            .stat-label {{
+                color: #718096;
+                font-size: 14px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }}
+            @media print {{
+                body {{ margin: 20px; }}
+                .chart-container {{ page-break-inside: avoid; }}
+            }}
         </style>
     </head>
     <body>
         <h1>Data Analysis Report</h1>
         <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        
-        <h2>Insights</h2>
+        <p><strong>Dataset Shape:</strong> {df.shape[0]:,} rows × {df.shape[1]} columns</p>
+
+        <div class="summary-stats">
+            <div class="stat-card">
+                <div class="stat-value">{len(insights)}</div>
+                <div class="stat-label">Key Insights</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{len(charts) if charts else 0}</div>
+                <div class="stat-label">Charts Generated</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{len(df.select_dtypes(include=[np.number]).columns)}</div>
+                <div class="stat-label">Numeric Columns</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{(df.isnull().sum().sum() / (len(df) * len(df.columns)) * 100):.1f}%</div>
+                <div class="stat-label">Missing Data</div>
+            </div>
+        </div>
+
+        <h2>Executive Summary</h2>
+        <p>This report contains a comprehensive analysis of your dataset, including {len(insights)} key insights and {len(charts) if charts else 0} analytical charts. The analysis covers data quality assessment, statistical summaries, and visual insights to help you understand your data better.</p>
+
+        <h2>Key Insights</h2>
         {''.join([f'<div class="insight">{insight}</div>' for insight in insights])}
-        
+
+        {charts_summary_html}
+
+        <h2>Visual Analysis</h2>
+        {chart_html if chart_html else '<p>No charts were generated for this analysis.</p>'}
+
         <h2>Data Preview</h2>
-        {df.head(10).to_html()}
-        
+        <p>The following table shows the first 10 rows of your dataset:</p>
+        {df.head(10).to_html(classes='data-table', index=False)}
+
         <h2>Summary Statistics</h2>
-        {df.describe().to_html()}
+        <p>Statistical summary of numeric columns:</p>
+        {df.describe().to_html(classes='data-table', float_format='%.2f')}
+
+        <h2>Data Quality Overview</h2>
+        <p>Missing values by column:</p>
+        {pd.DataFrame({
+            'Column': df.columns,
+            'Missing Count': df.isnull().sum().values,
+            'Missing %': (df.isnull().sum().values / len(df) * 100).round(2)
+        }).to_html(classes='data-table', index=False)}
+
+        <hr style="margin: 40px 0; border: none; border-top: 2px solid #e2e8f0;">
+        <p style="text-align: center; color: #718096; font-size: 14px;">
+            Report generated by Smart Data Platform | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        </p>
     </body>
     </html>
     """
     return html_content
+
+def collect_analysis_charts(df):
+    """Collect all charts generated during the analysis session"""
+    charts = []
+
+    try:
+        # 1. Missing values chart
+        missing_data = pd.DataFrame({
+            'Column': df.columns,
+            'Missing Count': df.isnull().sum().values,
+            'Missing %': (df.isnull().sum().values / len(df) * 100).round(2)
+        })
+        missing_data = missing_data[missing_data['Missing Count'] > 0]
+        if len(missing_data) > 0:
+            fig = px.bar(missing_data, x='Column', y='Missing %', title='Missing Values by Column')
+            charts.append({
+                'title': 'Missing Values Analysis',
+                'description': f'Bar chart showing missing data percentages across {len(missing_data)} columns with missing values',
+                'figure': fig
+            })
+
+        # 2. Distribution charts for numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if numeric_cols:
+            # Use the first numeric column for distribution
+            selected_col = numeric_cols[0]
+            fig = px.histogram(df, x=selected_col, title=f'Distribution of {selected_col}',
+                             marginal='box', nbins=30)
+            charts.append({
+                'title': f'Distribution Analysis - {selected_col}',
+                'description': f'Histogram and box plot showing the distribution of {selected_col} with {len(df[selected_col].dropna())} valid values',
+                'figure': fig
+            })
+
+        # 3. Correlation heatmap
+        numeric_df = df.select_dtypes(include=[np.number])
+        if len(numeric_df.columns) > 1:
+            fig = create_correlation_heatmap(df)
+            if fig:
+                charts.append({
+                    'title': 'Correlation Analysis',
+                    'description': f'Heatmap showing correlations between {len(numeric_df.columns)} numeric variables',
+                    'figure': fig
+                })
+
+        # 4. Categorical analysis (if available)
+        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        if categorical_cols:
+            cat_col = categorical_cols[0]
+            if df[cat_col].nunique() <= 10:  # Only for reasonable cardinality
+                value_counts = df[cat_col].value_counts().head(10)
+                fig = px.bar(x=value_counts.index, y=value_counts.values,
+                           title=f'Categories in {cat_col}', labels={'x': cat_col, 'y': 'Count'})
+                charts.append({
+                    'title': f'Categorical Analysis - {cat_col}',
+                    'description': f'Bar chart showing distribution of {df[cat_col].nunique()} categories in {cat_col}',
+                    'figure': fig
+                })
+
+        # 5. Time series if datetime columns exist
+        datetime_cols = df.select_dtypes(include=['datetime', 'datetime64[ns]']).columns.tolist()
+        if datetime_cols and numeric_cols:
+            dt_col = datetime_cols[0]
+            num_col = numeric_cols[0]
+            try:
+                temp_df = df.dropna(subset=[dt_col, num_col])
+                if len(temp_df) > 1:
+                    fig = px.line(temp_df, x=dt_col, y=num_col,
+                                title=f'Trend: {num_col} over {dt_col}')
+                    charts.append({
+                        'title': f'Time Series Analysis',
+                        'description': f'Line chart showing {num_col} trends over time using {dt_col}',
+                        'figure': fig
+                    })
+            except:
+                pass
+
+    except Exception as e:
+        # If chart collection fails, return empty list
+        print(f"Chart collection error: {e}")
+        pass
+
+    return charts
 
 def suggest_visualizations(df):
     """Return intelligent, validated visualization suggestions based on data characteristics."""
@@ -797,10 +1476,85 @@ def main():
         if suggestions:
             st.subheader("📋 Recommended Visualizations (Choose Below)")
             st.info("Based on your data analysis, here are the best charts for different insights:")
-            
+
             for i, suggestion in enumerate(suggestions, 1):
                 st.write(f"**{i}. {suggestion['name']}** — {suggestion['reason']}")
-        
+
+        st.markdown("---")
+
+        # ==================== GENERATED INSIGHTS SECTION ====================
+        st.subheader("📊 Generated Insights")
+        st.info("Automatically generated visualizations based on your data characteristics. You can keep, remove, or customize them.")
+
+        # Initialize or use cached generated insights (optimized hash)
+        df_key = get_dataframe_key(df)
+        if not st.session_state.generated_insights or st.session_state.get('last_df_key') != df_key:
+            with st.spinner("🔄 Generating insights..."):
+                st.session_state.generated_insights = auto_detect_and_generate_insights(df)
+                st.session_state.last_df_key = df_key
+                # Reset hidden insights on new data
+                st.session_state.insights_ui_state = {}
+
+        # Display generated insights
+        if st.session_state.generated_insights:
+            for idx, insight in enumerate(st.session_state.generated_insights):
+                insight_id = f"{insight['type']}_{idx}"
+
+                # Skip if user has hidden this insight
+                if st.session_state.insights_ui_state.get(insight_id, {}).get('hidden', False):
+                    continue
+
+                with st.container():
+                    st.markdown(f"### 📈 {insight['title']}")
+
+                    # Display chart in expander
+                    with st.expander(f"View {insight['type'].title()} Chart", expanded=True):
+                        col_chart, col_controls = st.columns([4, 1])
+
+                        with col_chart:
+                            try:
+                                # Handle both matplotlib and plotly figures
+                                if insight['type'] == ChartType.HEATMAP.value:
+                                    st.pyplot(insight['figure'], use_container_width=True)
+                                else:
+                                    st.plotly_chart(insight['figure'], use_container_width=True)
+                            except Exception as e:
+                                st.error(f"Error displaying chart: {e}")
+
+                        # Display description
+                        st.markdown(f"**Insight**: {insight['description']}")
+
+                    # Control buttons
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        if st.button("✅ Keep Visualization", key=f"keep_{insight_id}"):
+                            # Mark as kept (could be extended to save to favorites)
+                            st.success("Saved to your insights!")
+
+                    with col2:
+                        if st.button("🗑️ Remove", key=f"remove_insight_{insight_id}"):
+                            # Use consolidated state
+                            st.session_state.insights_ui_state[insight_id] = {'hidden': True}
+                            st.success("Insight removed from view")
+                            st.rerun()
+
+                    with col3:
+                        if st.button("⚙️ Customize", key=f"customize_{insight_id}"):
+                            # Use consolidated state
+                            if insight_id not in st.session_state.insights_ui_state:
+                                st.session_state.insights_ui_state[insight_id] = {}
+                            st.session_state.insights_ui_state[insight_id]['customize'] = True
+                            st.info(f"Customize options for {insight['title']} (coming soon)")
+
+                    with col4:
+                        if st.button("🔄 Change Type", key=f"change_type_{insight_id}"):
+                            st.info("Alternative chart types (coming soon)")
+
+                    st.markdown("---")
+        else:
+            st.info("No insights could be generated. Try uploading a dataset with more data variety.")
+
         st.markdown("---")
         st.subheader("🎨 Create Your Visualization")
         st.info("Select the chart type and columns below to create a custom visualization")
@@ -1734,16 +2488,38 @@ def main():
             if st.button("Generate HTML Report"):
                 with st.spinner("Generating report..."):
                     insights = generate_insights(df)
-                    html_report = export_to_pdf_html(df, insights, [])
-                    
+
+                    # Collect all charts from the analysis
+                    charts = collect_analysis_charts(df)
+
+                    html_report = export_to_pdf_html(df, insights, charts)
+
                     st.download_button(
                         label="Download HTML Report",
                         data=html_report,
                         file_name=f"data_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
                         mime="text/html"
                     )
-                    
-                    st.success("✓ Report generated! Click above to download")
+
+                    st.success(f"✓ Report generated with {len(insights)} insights and {len(charts)} charts! Click above to download")
+
+                    # Show preview of what's included
+                    with st.expander("Report Preview"):
+                        st.markdown("**Included in Report:**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"📊 **{len(insights)} Key Insights**")
+                            for i, insight in enumerate(insights[:3], 1):
+                                st.markdown(f"{i}. {insight[:100]}{'...' if len(insight) > 100 else ''}")
+                            if len(insights) > 3:
+                                st.markdown(f"*... and {len(insights)-3} more insights*")
+
+                        with col2:
+                            st.markdown(f"📈 **{len(charts)} Charts**")
+                            for chart in charts:
+                                st.markdown(f"• {chart['title']}")
+                            if not charts:
+                                st.markdown("*No charts were generated*")
         
         with tab2:
             st.subheader("Export to Excel")

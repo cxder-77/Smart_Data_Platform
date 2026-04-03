@@ -1215,8 +1215,8 @@ def main():
             "Home": "fa-home",
             "Upload Data": "fa-cloud-upload-alt",
             "Data Profiling": "fa-search",
-            "Visualizations": "fa-chart-pie",
             "Data Cleaning": "fa-broom",
+            "Visualizations": "fa-chart-pie",
             "Insights": "fa-lightbulb",
             "ML Predictions": "fa-robot",
             "Chat with Data": "fa-comments",
@@ -1886,7 +1886,7 @@ def main():
         st.markdown('<h2><i class="fas fa-broom"></i> Data Cleaning & Transformation</h2>', unsafe_allow_html=True)
         df = st.session_state.df
         
-        tab1, tab2, tab3, tab4 = st.tabs(["Missing Values", "Duplicates", "Transform", "Save"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Missing Values", "Duplicates", "Outliers", "Transform", "Save"])
         
         with tab1:
             st.subheader("Handle Missing Values")
@@ -1974,8 +1974,56 @@ def main():
                 st.dataframe(df[df.duplicated()], use_container_width=True)
             else:
                 st.success("✓ No duplicates found!")
-        
+
         with tab3:
+            st.subheader("Outlier Detection & Handling")
+
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            if not numeric_cols:
+                st.info("No numeric columns available for outlier detection.")
+            else:
+                outlier_col = st.selectbox("Select numeric column", numeric_cols, key='cleaning_outlier_col')
+                outliers, lower_bound, upper_bound = detect_outliers(df, outlier_col)
+
+                col_a, col_b, col_c = st.columns(3)
+                col_a.metric("Outliers", len(outliers))
+                col_b.metric("Lower Bound", f"{lower_bound:.3f}")
+                col_c.metric("Upper Bound", f"{upper_bound:.3f}")
+
+                if len(outliers) > 0:
+                    st.warning(f"Identified {len(outliers)} outliers ({len(outliers)/len(df)*100:.2f}% of rows)")
+                    st.dataframe(outliers, use_container_width=True)
+                else:
+                    st.success("✓ No outliers detected")
+
+                handle_method = st.selectbox("Outlier handling method", [
+                    "Do nothing",
+                    "Remove outliers",
+                    "Cap to bounds",
+                    "Replace with median"
+                ])
+
+                if st.button("Apply Outlier Action"):
+                    if handle_method == "Do nothing":
+                        st.info("No changes applied to outliers.")
+                    elif handle_method == "Remove outliers":
+                        df = df[(df[outlier_col] >= lower_bound) & (df[outlier_col] <= upper_bound)].copy()
+                        st.session_state.df = df
+                        st.success(f"✓ Outliers removed. New shape: {df.shape}")
+                        st.rerun()
+                    elif handle_method == "Cap to bounds":
+                        df[outlier_col] = df[outlier_col].clip(lower_bound, upper_bound)
+                        st.session_state.df = df
+                        st.success("✓ Outliers capped to bounds")
+                        st.rerun()
+                    elif handle_method == "Replace with median":
+                        median_val = df[outlier_col].median()
+                        df.loc[(df[outlier_col] < lower_bound) | (df[outlier_col] > upper_bound), outlier_col] = median_val
+                        st.session_state.df = df
+                        st.success("✓ Outliers replaced with median")
+                        st.rerun()
+
+        with tab4:
             st.subheader("Data Transformation")
             
             transform_type = st.selectbox("Select transformation", [
@@ -2102,7 +2150,7 @@ def main():
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
         
-        with tab4:
+        with tab5:
             st.subheader("Save Changes")
             
             col1, col2 = st.columns(2)

@@ -2,6 +2,10 @@
 
 A powerful **no-code / low-code Streamlit application** for data analysis, visualization, and machine learning. This project allows users to upload datasets, explore them interactively, clean data, generate insights, train ML models, and make predictions — all from a web interface.
 
+## 🌐 Access the App
+
+🚀 **Live Demo**: [https://smartdataplatform.streamlit.app/](https://smartdataplatform.streamlit.app/)
+
 ---
 
 ## 🚀 Features
